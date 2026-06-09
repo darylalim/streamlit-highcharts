@@ -70,7 +70,7 @@ def build_options(
         value_col = y_cols[0]
         data = [
             {"name": str(name), "y": float(value)}
-            for name, value in zip(df[x_col], df[value_col])
+            for name, value in zip(df[x_col], df[value_col], strict=True)
             if not pd.isna(value)
         ]
         return {
@@ -97,7 +97,7 @@ def build_options(
             if numeric_x:
                 points = [
                     [float(x), float(y)]
-                    for x, y in zip(df[x_col], df[col])
+                    for x, y in zip(df[x_col], df[col], strict=True)
                     if not pd.isna(x) and not pd.isna(y)
                 ]
             else:
