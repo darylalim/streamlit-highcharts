@@ -77,3 +77,10 @@ Dev (in the `dev` dependency group, installed by `uv sync`):
 
 - `pytest` — tests
 - `watchdog` — faster, more reliable Streamlit hot-reload
+
+## License
+
+The code in this repo is MIT-licensed (see [`LICENSE`](LICENSE)). Rendering
+relies on Highcharts JS (loaded from the CDN) and the Highcharts export server,
+which are subject to Highcharts' own licensing — free for non-commercial use;
+commercial use requires a Highcharts license.
