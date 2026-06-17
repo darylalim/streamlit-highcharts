@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "highcharts-python-pipeline"
+name = "streamlit-highcharts"
 version = "0.1.0"
 description = "Generate data visualizations with the Highcharts for Python Toolkit."
 requires-python = ">=3.12"

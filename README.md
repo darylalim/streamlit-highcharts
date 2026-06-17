@@ -103,9 +103,9 @@ check on every push to `main` and every pull request
 
 ## Notes
 
-- There is **no official `streamlit-highcharts` integration** for the
-  `highcharts-core` object model, so this app uses the dependency-free
-  `Chart` → HTML → `st.iframe` bridge.
+- There is **no official Streamlit ↔ Highcharts component** (no `st.highcharts`
+  widget) for the `highcharts-core` object model, so this app uses the
+  dependency-free `Chart` → HTML → `st.iframe` bridge.
 - In **interactive** mode, charts load Highcharts JS from the CDN
   (`https://code.highcharts.com/`), so the browser needs network access. The
   iframe has a fixed height (it does not auto-grow).
