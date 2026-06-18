@@ -12,6 +12,8 @@ Run it with:
 
 from __future__ import annotations
 
+from typing import Literal
+
 import pandas as pd
 import streamlit as st
 
@@ -24,9 +26,12 @@ from highcharts_builder import (
 )
 from highcharts_component import (
     clear_selected_point,
+    forget_selection_if_config_changed,
     get_selected_point,
     interactive_chart,
+    point_label,
 )
+from sample_data import SAMPLES
 
 # Render modes for the "3 · Render" control.
 MODE_INTERACTIVE = "Interactive"
@@ -34,66 +39,31 @@ MODE_EVENTS = "Interactive + click events"
 MODE_STATIC = "Static PNG"
 RENDER_MODES = [MODE_INTERACTIVE, MODE_EVENTS, MODE_STATIC]
 
-st.set_page_config(page_title="Highcharts × Streamlit", page_icon="📈", layout="wide")
-
-
-def point_label(point: dict):
-    """First present identifier of a clicked point: category, then name, then x.
-
-    Uses ``is not None`` (not truthiness) so a legitimate ``x == 0`` — the first
-    index of a series — is honored rather than skipped as falsy.
-    """
-    for field in ("category", "name", "x"):
-        value = point.get(field)
-        if value is not None:
-            return value
-    return None
-
-
-# --------------------------------------------------------------------------- #
-# Sample data (so the app works with no upload). Each returns a fresh DataFrame.
-# --------------------------------------------------------------------------- #
-def _revenue_vs_cost() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "month": ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
-            "revenue": [120, 135, 128, 150, 162, 171],
-            "cost": [80, 88, 90, 95, 101, 108],
-        }
-    )
-
-
-def _fruit_sales() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "fruit": ["Apples", "Bananas", "Cherries", "Grapes", "Oranges"],
-            "units_sold": [620, 540, 210, 380, 470],
-        }
-    )
-
-
-def _height_vs_weight() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "height_cm": [152, 158, 161, 165, 168, 172, 175, 180, 185, 190],
-            "weight_kg": [50, 55, 58, 61, 65, 70, 74, 80, 86, 94],
-        }
-    )
-
-
-SAMPLES = {
-    "Monthly revenue vs cost (line/area/column)": _revenue_vs_cost,
-    "Fruit sales (pie/bar/column)": _fruit_sales,
-    "Height vs weight (scatter)": _height_vs_weight,
+# Short status badge (label, icon, color) shown above the chart per mode; the
+# caption below the chart carries the full description.
+_BadgeColor = Literal["blue", "green", "violet"]
+MODE_BADGES: dict[str, tuple[str, str, _BadgeColor]] = {
+    MODE_INTERACTIVE: ("Interactive (iframe)", ":material/public:", "blue"),
+    MODE_EVENTS: ("Click events", ":material/ads_click:", "green"),
+    MODE_STATIC: ("Static PNG", ":material/image:", "violet"),
 }
 
+st.set_page_config(
+    page_title="Highcharts × Streamlit",
+    page_icon=":material/show_chart:",
+    layout="wide",
+)
 
-@st.cache_data(show_spinner=False)
+
+# max_entries bounds each cache so entries are evicted LRU instead of piling up
+# as users sweep chart types, columns, heights, and titles (PNG bytes and full
+# HTML docs are the largest, so those get the tighter caps).
+@st.cache_data(show_spinner=False, max_entries=8)
 def load_csv(file) -> pd.DataFrame:
     return pd.read_csv(file)
 
 
-@st.cache_data(show_spinner="Rendering Highcharts…")
+@st.cache_data(show_spinner="Rendering Highcharts…", max_entries=128)
 def cached_chart_html(df, chart_type, x_col, y_cols, height, title) -> str:
     return build_chart_html(
         df,
@@ -105,7 +75,9 @@ def cached_chart_html(df, chart_type, x_col, y_cols, height, title) -> str:
     )
 
 
-@st.cache_data(show_spinner="Rendering PNG via the Highcharts export server…")
+@st.cache_data(
+    show_spinner="Rendering PNG via the Highcharts export server…", max_entries=64
+)
 def cached_chart_png(df, chart_type, x_col, y_cols, height, title) -> bytes:
     return build_chart_png(
         df,
@@ -117,7 +89,7 @@ def cached_chart_png(df, chart_type, x_col, y_cols, height, title) -> bytes:
     )
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=128)
 def cached_chart_js(df, chart_type, x_col, y_cols, title) -> str:
     # highcharts-core stubs `to_js_literal` as `str | None`; it returns the JS
     # literal string for a built chart.
@@ -127,7 +99,7 @@ def cached_chart_js(df, chart_type, x_col, y_cols, title) -> str:
 # --------------------------------------------------------------------------- #
 # Header
 # --------------------------------------------------------------------------- #
-st.title("📈 Highcharts visualizations in Streamlit")
+st.title(":material/insights: Highcharts visualizations in Streamlit")
 st.caption(
     "Every chart below is rendered by **highcharts-core** (the Highcharts for "
     "Python toolkit) and embedded via `st.iframe` — no native Streamlit charts "
@@ -139,8 +111,13 @@ st.caption(
 # Sidebar — data source + chart configuration
 # --------------------------------------------------------------------------- #
 with st.sidebar:
-    st.header("1 · Data")
-    source = st.radio("Source", ["Sample dataset", "Upload CSV"], horizontal=True)
+    st.header(":material/database: 1 · Data")
+    source = (
+        st.segmented_control(
+            "Source", ["Sample dataset", "Upload CSV"], default="Sample dataset"
+        )
+        or "Sample dataset"
+    )
 
     if source == "Sample dataset":
         name = st.selectbox("Dataset", list(SAMPLES))
@@ -148,16 +125,21 @@ with st.sidebar:
     else:
         uploaded = st.file_uploader("CSV file", type="csv")
         if uploaded is None:
-            st.info("Upload a CSV, or switch to a sample dataset.")
+            st.info(
+                "Upload a CSV, or switch to a sample dataset.",
+                icon=":material/upload_file:",
+            )
             st.stop()
         df = load_csv(uploaded)
 
     numeric_cols = df.select_dtypes("number").columns.tolist()
     if not numeric_cols:
-        st.error("This dataset has no numeric columns to plot.")
+        st.error(
+            "This dataset has no numeric columns to plot.", icon=":material/error:"
+        )
         st.stop()
 
-    st.header("2 · Chart")
+    st.header(":material/bar_chart: 2 · Chart")
     chart_type = st.selectbox("Chart type", SUPPORTED_TYPES)
 
     if chart_type == "pie":
@@ -170,7 +152,11 @@ with st.sidebar:
     x_col = st.selectbox(x_label, df.columns)
 
     if multi:
-        y_cols = st.multiselect(y_label, numeric_cols, default=numeric_cols[:1])
+        # Pills show every series choice inline (vs a dropdown); the empty-set
+        # guard in the main panel handles a fully-cleared selection.
+        y_cols = st.pills(
+            y_label, numeric_cols, selection_mode="multi", default=numeric_cols[:1]
+        )
     else:
         y_cols = [st.selectbox(y_label, numeric_cols)]
 
@@ -184,16 +170,22 @@ with st.sidebar:
     )
     height = st.slider("Height (px)", min_value=300, max_value=800, value=480, step=20)
 
-    st.header("3 · Render")
-    render_mode = st.radio(
-        "Mode",
-        RENDER_MODES,
-        horizontal=True,
-        help="**Interactive**: Highcharts loads from the CDN in a sandboxed "
-        "iframe (one-way). **Interactive + click events**: a Custom Component v2 "
-        "that also sends clicked points back to Python. **Static PNG**: rendered "
-        "server-side via the Highcharts export server; the browser loads no "
-        "Highcharts JS.",
+    st.header(":material/tune: 3 · Render")
+    render_mode = (
+        st.segmented_control(
+            "Mode",
+            RENDER_MODES,
+            default=MODE_INTERACTIVE,
+            help=(
+                "- **Interactive** — Highcharts loads from the CDN in a sandboxed "
+                "iframe (one-way).\n"
+                "- **Interactive + click events** — a Custom Component v2 that also "
+                "sends clicked points back to Python.\n"
+                "- **Static PNG** — rendered server-side via the Highcharts export "
+                "server; the browser loads no Highcharts JS."
+            ),
+        )
+        or MODE_INTERACTIVE
     )
 
 
@@ -202,21 +194,24 @@ with st.sidebar:
 # --------------------------------------------------------------------------- #
 left, right = st.columns([3, 2], gap="large")
 
-# Forget a click selection when the chart configuration changes, so a point from
-# a previous chart doesn't linger in the click-events panels. Don't clear on the
-# first observation (prev is None) — only when a known signature actually changes.
+# Drop a click selection when the chart configuration changes, so a point from a
+# previous chart doesn't linger in the click-events panels.
 if render_mode == MODE_EVENTS:
-    config_sig = (chart_type, x_col, tuple(y_cols))
-    if (
-        st.session_state.get("hc_config_sig") is not None
-        and st.session_state["hc_config_sig"] != config_sig
-    ):
-        clear_selected_point()
-    st.session_state["hc_config_sig"] = config_sig
+    forget_selection_if_config_changed(chart_type, x_col, y_cols)
 
-with right:
+with right.container(border=True):
     st.subheader("Source data")
-    st.dataframe(df, height=min(height, 360))
+    # Format numbers, hide the index, and pin the chart's X column so it stays
+    # visible while scrolling wide CSVs.
+    column_config = {col: st.column_config.NumberColumn() for col in numeric_cols}
+    column_config[x_col] = (
+        st.column_config.NumberColumn(pinned=True)
+        if x_col in numeric_cols
+        else st.column_config.Column(pinned=True)
+    )
+    st.dataframe(
+        df, height=min(height, 360), hide_index=True, column_config=column_config
+    )
     st.caption(f"{len(df)} rows × {len(df.columns)} columns")
 
     # In click-events mode, surface the row behind the most recently clicked
@@ -233,15 +228,23 @@ with right:
             else:
                 st.dataframe(match, hide_index=True)
 
-with left:
+with left.container(border=True):
     st.subheader("Highcharts output")
 
     if not y_cols:
-        st.warning("Pick at least one numeric column to plot.")
+        st.warning(
+            "Pick at least one numeric column to plot.", icon=":material/warning:"
+        )
         st.stop()
     if chart_type in CARTESIAN_TYPES and x_col in y_cols:
-        st.warning("The X-axis column can't also be a Y series — pick a different X.")
+        st.warning(
+            "The X-axis column can't also be a Y series — pick a different X.",
+            icon=":material/warning:",
+        )
         st.stop()
+
+    badge_label, badge_icon, badge_color = MODE_BADGES[render_mode]
+    st.badge(badge_label, icon=badge_icon, color=badge_color)
 
     if render_mode == MODE_STATIC:
         # Server-side render: no Highcharts JS runs in the browser.
@@ -251,15 +254,17 @@ with left:
             st.error(
                 f"Static (PNG) render failed.\n\n`{type(exc).__name__}: {exc}`\n\n"
                 "This usually means the Highcharts export server is unreachable — "
-                "check your network, or pick an interactive mode instead."
+                "check your network, or pick an interactive mode instead.",
+                icon=":material/cloud_off:",
             )
             st.stop()
         st.image(png, width="stretch")
         st.download_button(
-            "⬇ Download PNG",
+            "Download PNG",
             png,
             file_name=f"{chart_type}-chart.png",
             mime="image/png",
+            icon=":material/download:",
         )
         st.caption(
             "Static PNG rendered server-side via the Highcharts export server — "
@@ -277,16 +282,18 @@ with left:
         selected = get_selected_point()
         if selected is not None:
             label = point_label(selected)
-            info_col, clear_col = st.columns([4, 1])
-            info_col.success(
-                f"Last click → series **{selected.get('series')}**, "
-                f"point **{label}**, value **{selected.get('y')}**"
-            )
-            if clear_col.button("Clear"):
-                clear_selected_point()
-                st.rerun()
+            with st.container(horizontal=True):
+                st.success(
+                    f"Last click → series **{selected.get('series')}**, "
+                    f"point **{label}**, value **{selected.get('y')}**",
+                    icon=":material/ads_click:",
+                )
+                st.button("Clear", on_click=clear_selected_point)
         else:
-            st.info("Click any point, bar, or slice in the chart above.")
+            st.info(
+                "Click any point, bar, or slice in the chart above.",
+                icon=":material/ads_click:",
+            )
     else:
         html = cached_chart_html(df, chart_type, x_col, tuple(y_cols), height, title)
         # The HTML is embedded in a sandboxed iframe with a FIXED height — it
@@ -296,6 +303,8 @@ with left:
             "Interactive chart — Highcharts JS is loaded from the CDN in the browser."
         )
 
-    with st.expander("View the generated Highcharts config (JavaScript)"):
+    with st.expander(
+        "View the generated Highcharts config (JavaScript)", icon=":material/code:"
+    ):
         chart_js = cached_chart_js(df, chart_type, x_col, tuple(y_cols), title)
         st.code(chart_js, language="javascript")

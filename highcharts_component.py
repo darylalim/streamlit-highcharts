@@ -27,10 +27,25 @@ from streamlit.components.v2.get_bidi_component_manager import (
 
 from highcharts_builder import build_options
 
-# Session-state keys: the component's own mounted-instance state, and the
-# separate key where we persist the most recent click for the rest of the app.
+# Session-state keys: the component's own mounted-instance state, the key where
+# we persist the most recent click for the rest of the app, and the last chart
+# configuration we saw (used to drop a stale selection when the chart changes).
 COMPONENT_KEY = "hc_interactive"
 SELECTION_KEY = "hc_selected_point"
+CONFIG_SIG_KEY = "hc_config_sig"
+
+
+def point_label(point: dict):
+    """First present identifier of a clicked point: category, then name, then x.
+
+    Uses ``is not None`` (not truthiness) so a legitimate ``x == 0`` — the first
+    index of a series — is honored rather than skipped as falsy.
+    """
+    for field in ("category", "name", "x"):
+        value = point.get(field)
+        if value is not None:
+            return value
+    return None
 
 
 def json_safe(obj):
@@ -90,6 +105,25 @@ export default function (component) {
 
   loadHighcharts().then((Highcharts) => {
     const options = structuredClone((data && data.options) || {});
+
+    // Theme the chart live from Streamlit's --st-* variables (set on the shadow
+    // host), so the interactive chart tracks the app's light/dark/custom theme.
+    // Each is optional — fall back to whatever options already carry.
+    const themeHost = parentElement.host || parentElement;
+    const cssVar = (name) => getComputedStyle(themeHost).getPropertyValue(name).trim();
+    const palette = cssVar("--st-chart-categorical-colors");
+    if (palette) options.colors = palette.split(",").map((c) => c.trim());
+    const textColor = cssVar("--st-text-color");
+    const fontFamily = cssVar("--st-font");
+    if (textColor || fontFamily) {
+      options.chart = options.chart || {};
+      options.chart.style = Object.assign(
+        {},
+        options.chart.style,
+        fontFamily ? { fontFamily } : {},
+        textColor ? { color: textColor } : {},
+      );
+    }
 
     // JS -> Python: send the clicked point as a transient trigger.
     options.plotOptions = options.plotOptions || {};
@@ -212,3 +246,17 @@ def get_selected_point() -> dict | None:
 def clear_selected_point() -> None:
     """Forget the current click selection."""
     st.session_state.pop(SELECTION_KEY, None)
+
+
+def forget_selection_if_config_changed(chart_type, x_col, y_cols) -> None:
+    """Drop the click selection when the chart configuration changes.
+
+    Keeps a stale point from a previous chart out of the click-events panels.
+    Doesn't clear on the first observation (no prior signature) — only when a
+    known signature actually changes.
+    """
+    signature = (chart_type, x_col, tuple(y_cols))
+    previous = st.session_state.get(CONFIG_SIG_KEY)
+    if previous is not None and previous != signature:
+        clear_selected_point()
+    st.session_state[CONFIG_SIG_KEY] = signature

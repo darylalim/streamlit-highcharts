@@ -31,6 +31,7 @@ sys.path.insert(0, str(ROOT))
 
 from highcharts_builder import (  # noqa: E402
     CARTESIAN_TYPES,
+    DEFAULT_COLORS,
     SUPPORTED_TYPES,
     build_options,
 )
@@ -62,6 +63,20 @@ def test_default_title_per_type(labeled_frame, chart_type):
 def test_explicit_title_overrides_default(labeled_frame):
     opts = build_options(labeled_frame, "line", "label", ["value"], title="Custom")
     assert opts["title"]["text"] == "Custom"
+
+
+@pytest.mark.parametrize("chart_type", SUPPORTED_TYPES)
+def test_default_palette_applied_per_type(labeled_frame, chart_type):
+    # Every chart type carries the brand palette so all render modes share a look.
+    opts = build_options(labeled_frame, chart_type, "label", ["value"])
+    assert opts["colors"] == list(DEFAULT_COLORS)
+
+
+def test_colors_override(labeled_frame):
+    opts = build_options(
+        labeled_frame, "line", "label", ["value"], colors=["#000000", "#ffffff"]
+    )
+    assert opts["colors"] == ["#000000", "#ffffff"]
 
 
 # --------------------------------------------------------------------------- #
@@ -227,6 +242,15 @@ def test_read_state_value_handles_dict_and_attribute_shapes():
     assert _read_state_value(AttrState(), "point_click") == {"y": 2}
 
 
+def test_point_label_prefers_category_then_name_then_x_honoring_zero():
+    from highcharts_component import point_label
+
+    assert point_label({"category": "Feb", "name": "n", "x": 1}) == "Feb"
+    assert point_label({"name": "Apples", "x": 2}) == "Apples"
+    assert point_label({"x": 0}) == 0  # x == 0 honored, not skipped as falsy
+    assert point_label({}) is None
+
+
 # --------------------------------------------------------------------------- #
 # Full app, headless (Streamlit AppTest)
 #
@@ -234,10 +258,10 @@ def test_read_state_value_handles_dict_and_attribute_shapes():
 # above own that). The rendered chart lives in an opaque st.iframe that AppTest
 # can't see into, but the "generated config" expander exposes the Highcharts JS
 # literal via st.code — so we assert the controls actually reach the builder.
-# Sidebar selectboxes are addressed by position: [0] Dataset, [1] Chart type,
-# [2] X axis; radios by position: [0] Source, [1] Render mode. Everything here
-# stays on the network-free interactive path (the Static PNG render mode would
-# call the live export server).
+# Sidebar widgets are addressed by position: selectbox [0] Dataset, [1] Chart
+# type, [2] X axis; segmented_control [0] Source, [1] Render mode; pills [0] the
+# Y series. Everything here stays on the network-free interactive path (the
+# Static PNG render mode would call the live export server).
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def app():
@@ -265,8 +289,8 @@ def test_app_custom_title_flows_into_config(app):
 
 
 def test_app_multiple_series_selected(app):
-    # The revenue-vs-cost sample has two numeric columns; select both.
-    app.multiselect[0].set_value(["revenue", "cost"]).run()
+    # The revenue-vs-cost sample has two numeric columns; select both via pills.
+    app.pills[0].set_value(["revenue", "cost"]).run()
     assert not app.exception
     js = app.code[0].value
     assert "revenue" in js and "cost" in js
@@ -276,7 +300,7 @@ def test_app_x_equals_y_shows_guard_warning(app):
     # Force the cartesian "X can't also be a Y series" guard from the UI: set the
     # X axis to a numeric column and pick that same column as the Y series.
     app.selectbox[2].set_value("revenue").run()  # Category (X) axis
-    app.multiselect[0].set_value(["revenue"]).run()  # Series (Y)
+    app.pills[0].set_value(["revenue"]).run()  # Series (Y)
     assert not app.exception
     assert app.warning
     assert "can't also be a Y series" in app.warning[0].value
@@ -285,20 +309,20 @@ def test_app_x_equals_y_shows_guard_warning(app):
 def test_app_upload_csv_with_no_file_shows_info_guard(app):
     # The second data source: switching to "Upload CSV" with no file uploaded
     # hits the st.info + st.stop guard. Network-free (no CSV read, no render).
-    app.radio[0].set_value("Upload CSV").run()  # Source
+    app.segmented_control[0].set_value("Upload CSV").run()  # Source
     assert not app.exception
     assert app.info
     assert "Upload a CSV" in app.info[0].value
 
 
 def test_app_events_mode_mounts_custom_component(app):
-    # Switch the render mode (radio[1]) to the CCv2 click-events mode. The
-    # component mounts headlessly — no browser, no network from Python. With no
-    # click seeded, the events branch shows its "click a point" prompt. We assert
-    # on the events-specific caption/info (not the generated-config expander,
-    # which is identical across render modes).
-    assert app.radio[1].label == "Mode"  # guard the positional index
-    app.radio[1].set_value("Interactive + click events").run()
+    # Switch the render mode (segmented_control[1]) to the CCv2 click-events mode.
+    # The component mounts headlessly — no browser, no network from Python. With
+    # no click seeded, the events branch shows its "click a point" prompt. We
+    # assert on the events-specific caption/info (not the generated-config
+    # expander, which is identical across render modes).
+    assert app.segmented_control[1].label == "Mode"  # guard the positional index
+    app.segmented_control[1].set_value("Interactive + click events").run()
     assert not app.exception
     assert any("Custom Component v2" in cap.value for cap in app.caption)
     assert any("Click any point" in msg.value for msg in app.info)
@@ -319,7 +343,7 @@ def test_app_events_mode_renders_seeded_click_then_clears(app):
         "x": 1,
         "y": 135,
     }
-    app.radio[1].set_value("Interactive + click events").run()
+    app.segmented_control[1].set_value("Interactive + click events").run()
     assert not app.exception
     assert any("series **revenue**" in s.value for s in app.success)
     assert any("Clicked point" in m.value for m in app.markdown)

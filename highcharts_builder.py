@@ -23,6 +23,22 @@ SINGLE_VALUE_TYPES = ("pie",)
 XY_TYPES = ("scatter",)
 SUPPORTED_TYPES = CARTESIAN_TYPES + SINGLE_VALUE_TYPES + XY_TYPES
 
+# Default series palette, applied to every chart so all render modes (iframe,
+# static PNG, and the CCv2 component) share one look that matches the Streamlit
+# theme in .streamlit/config.toml (it leads with the config's primaryColor). The
+# interactive CCv2 chart overrides this live from the browser's --st-* theme
+# variables; the iframe and PNG paths, which have no theme CSS, rely on it.
+DEFAULT_COLORS = (
+    "#2563eb",  # blue (matches config.toml primaryColor)
+    "#16a34a",  # green
+    "#f59e0b",  # amber
+    "#dc2626",  # red
+    "#7c3aed",  # violet
+    "#0891b2",  # cyan
+    "#db2777",  # pink
+    "#65a30d",  # lime
+)
+
 
 def _num(value):
     """Coerce one DataFrame value to a JSON-friendly number or Highcharts null."""
@@ -38,6 +54,7 @@ def build_options(
     y_cols: list[str],
     *,
     title: str | None = None,
+    colors: list[str] | None = None,
 ) -> dict:
     """Return a Highcharts options ``dict`` for the given DataFrame and columns.
 
@@ -48,6 +65,8 @@ def build_options(
     - ``scatter``: ``x_col`` and each ``y_cols`` column form (x, y) point pairs.
       A non-numeric ``x_col`` is plotted by row position and labelled with the
       column's values via the x-axis categories.
+
+    ``colors`` overrides the series palette; it defaults to ``DEFAULT_COLORS``.
 
     Raises ``ValueError`` for an unsupported ``chart_type``, empty ``y_cols``,
     or (for cartesian types) an ``x_col`` that is also one of the ``y_cols``.
@@ -64,6 +83,7 @@ def build_options(
         )
 
     title = title or f"{chart_type.title()} chart"
+    colors = list(colors) if colors is not None else list(DEFAULT_COLORS)
 
     if chart_type in SINGLE_VALUE_TYPES:  # pie
         value_col = y_cols[0]
@@ -74,6 +94,7 @@ def build_options(
         ]
         return {
             "chart": {"type": "pie"},
+            "colors": colors,
             "title": {"text": title},
             "tooltip": {"pointFormat": "{series.name}: <b>{point.percentage:.1f}%</b>"},
             "plotOptions": {
@@ -111,6 +132,7 @@ def build_options(
             x_axis["categories"] = [str(v) for v in df[x_col].tolist()]
         return {
             "chart": {"type": "scatter", "zooming": {"type": "xy"}},
+            "colors": colors,
             "title": {"text": title},
             "xAxis": x_axis,
             "yAxis": {"title": {"text": ", ".join(y_cols)}},
@@ -125,6 +147,7 @@ def build_options(
     ]
     return {
         "chart": {"type": chart_type},
+        "colors": colors,
         "title": {"text": title},
         "xAxis": {"categories": categories, "title": {"text": x_col}},
         "yAxis": {"title": {"text": ", ".join(y_cols)}},

@@ -18,13 +18,19 @@ for Python toolkit (`highcharts-core`) — the app uses no native Streamlit char
 - `highcharts_component.py` — Streamlit-importing wrapper that renders the chart
   as a bidirectional Custom Component v2 (CCv2): it reuses `build_options` and
   feeds it (via `json_safe`) to a client-side Highcharts instance that sends
-  point clicks back to Python. Powers the "Interactive + click events" mode.
-  Public helpers: `interactive_chart`, `get_selected_point`,
-  `clear_selected_point`, `json_safe`.
+  point clicks back to Python. Powers the "Interactive + click events" mode and
+  owns all `hc_*` click-events session state. Public helpers: `interactive_chart`,
+  `get_selected_point`, `clear_selected_point`, `forget_selection_if_config_changed`,
+  `point_label`, `json_safe`.
+- `sample_data.py` — pure (Streamlit-free) built-in sample datasets and the
+  `SAMPLES` registry the app offers when no CSV is uploaded.
 - `tests/test_smoke.py` — builder unit tests (parametrized over every chart
   type, with the missing-data and scatter edge cases and the validation guards),
   CCv2 helper unit tests (`json_safe`, `_read_state_value`), plus headless
   `AppTest` interaction tests for the app (including the click-events round-trip).
+- `.streamlit/config.toml` — project Streamlit theme (brands the app shell). The
+  chart colors are themed separately (see Conventions) since charts render in an
+  iframe/component the shell theme can't reach.
 
 ## How a chart is built
 
@@ -49,6 +55,11 @@ Supported chart types: `line`, `spline`, `area`, `column`, `bar`, `pie`,
 ```bash
 uv run streamlit run streamlit_app.py
 ```
+
+`.streamlit/config.toml` themes the shell and enables `runOnSave`, so saves
+auto-rerun. When a stale chart or an export-server failure is suspected, flush
+the four `@st.cache_data` renderers with `uv run streamlit cache clear`; verify
+config with `uv run streamlit config show`.
 
 ## Test
 
@@ -99,3 +110,8 @@ catch the same problems in our own code.
   `None`. The one sanctioned exception is the CCv2 JSON `data` path:
   `highcharts_component.json_safe` rewrites `EnforcedNull` to JSON `null`
   (`None`) before the options are handed to Highcharts in the browser.
+- Theme charts via `highcharts_builder.DEFAULT_COLORS` (applied by
+  `build_options` to every chart, so the iframe and PNG paths are themed too),
+  keeping its first color in sync with `primaryColor` in `.streamlit/config.toml`.
+  The interactive CCv2 chart additionally re-reads the live `--st-*` theme
+  variables in the browser so it tracks light/dark switches.
