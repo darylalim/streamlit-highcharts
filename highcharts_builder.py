@@ -1,8 +1,7 @@
 """Build Highcharts (highcharts-core) charts from pandas DataFrames.
 
 Produces either self-contained HTML for embedding in Streamlit with
-``st.iframe`` (or the older ``components.v1.html``), or PNG bytes rendered via
-the Highcharts export server.
+``st.iframe``, or PNG bytes rendered via the Highcharts export server.
 
 This module is deliberately Streamlit-free so it can be imported and unit
 tested on its own. ``streamlit_app.py`` wraps it with the UI and caching.
@@ -165,7 +164,7 @@ def build_chart_html(
     Includes the Highcharts CDN ``<script>`` tags the chart actually needs
     (resolved by ``get_script_tags``) plus the ``Highcharts.chart(...)`` call
     emitted by ``to_js_literal``. Pass the result to ``st.iframe(html,
-    height=...)`` (or ``components.v1.html``).
+    height=...)``.
     """
     chart = make_chart(
         df, chart_type, x_col, y_cols, container_id=container_id, title=title

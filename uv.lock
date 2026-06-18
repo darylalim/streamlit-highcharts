@@ -965,7 +965,7 @@ dev = [
 requires-dist = [
     { name = "highcharts-core", specifier = ">=1.10.3" },
     { name = "pandas", specifier = ">=2.2.0" },
-    { name = "streamlit", specifier = ">=1.56.0" },
+    { name = "streamlit", specifier = ">=1.57.0" },
 ]
 
 [package.metadata.requires-dev]

@@ -9,14 +9,22 @@ for Python toolkit (`highcharts-core`) — the app uses no native Streamlit char
 ## Structure
 
 - `streamlit_app.py` — the Streamlit UI: data source (sample datasets or CSV
-  upload), chart-type/column controls, caching, render-mode toggle, and the
-  chart embed.
+  upload), chart-type/column controls, caching, the render-mode selector
+  (interactive iframe / interactive click-events / static PNG), and the chart
+  embed.
 - `highcharts_builder.py` — pure, Streamlit-free helpers that turn a DataFrame
   into a Highcharts options `dict`, a `Chart`, and embeddable HTML or PNG bytes.
   Independently importable and unit-testable.
+- `highcharts_component.py` — Streamlit-importing wrapper that renders the chart
+  as a bidirectional Custom Component v2 (CCv2): it reuses `build_options` and
+  feeds it (via `json_safe`) to a client-side Highcharts instance that sends
+  point clicks back to Python. Powers the "Interactive + click events" mode.
+  Public helpers: `interactive_chart`, `get_selected_point`,
+  `clear_selected_point`, `json_safe`.
 - `tests/test_smoke.py` — builder unit tests (parametrized over every chart
-  type, with the missing-data and scatter edge cases and the validation guards)
-  plus headless `AppTest` interaction tests for the app.
+  type, with the missing-data and scatter edge cases and the validation guards),
+  CCv2 helper unit tests (`json_safe`, `_read_state_value`), plus headless
+  `AppTest` interaction tests for the app (including the click-events round-trip).
 
 ## How a chart is built
 
@@ -87,4 +95,7 @@ catch the same problems in our own code.
 - Render every visualization with Highcharts (`highcharts-core`); do not use
   native Streamlit charts.
 - Use `EnforcedNull` (from `highcharts_core.constants`) for missing data points
-  in dict configs, not Python `None`.
+  in dict configs fed to highcharts-core (`Chart.from_options`), not Python
+  `None`. The one sanctioned exception is the CCv2 JSON `data` path:
+  `highcharts_component.json_safe` rewrites `EnforcedNull` to JSON `null`
+  (`None`) before the options are handed to Highcharts in the browser.

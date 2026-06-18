@@ -22,22 +22,32 @@ from highcharts_builder import (
     build_chart_png,
     make_chart,
 )
+from highcharts_component import (
+    clear_selected_point,
+    get_selected_point,
+    interactive_chart,
+)
+
+# Render modes for the "3 · Render" control.
+MODE_INTERACTIVE = "Interactive"
+MODE_EVENTS = "Interactive + click events"
+MODE_STATIC = "Static PNG"
+RENDER_MODES = [MODE_INTERACTIVE, MODE_EVENTS, MODE_STATIC]
 
 st.set_page_config(page_title="Highcharts × Streamlit", page_icon="📈", layout="wide")
 
 
-def embed_html(html: str, height: int) -> None:
-    """Embed a raw HTML document in a fixed-height iframe.
+def point_label(point: dict):
+    """First present identifier of a clicked point: category, then name, then x.
 
-    Uses the current ``st.iframe`` API when available, falling back to the
-    older ``components.v1.html`` on Streamlit versions before ``st.iframe``.
+    Uses ``is not None`` (not truthiness) so a legitimate ``x == 0`` — the first
+    index of a series — is honored rather than skipped as falsy.
     """
-    if hasattr(st, "iframe"):
-        st.iframe(html, height=height)
-    else:  # Streamlit < 1.56
-        import streamlit.components.v1 as components
-
-        components.html(html, height=height, scrolling=False)
+    for field in ("category", "name", "x"):
+        value = point.get(field)
+        if value is not None:
+            return value
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -175,12 +185,15 @@ with st.sidebar:
     height = st.slider("Height (px)", min_value=300, max_value=800, value=480, step=20)
 
     st.header("3 · Render")
-    static = st.toggle(
-        "Static image (PNG)",
-        value=False,
-        help="Render the chart server-side via the Highcharts export server and "
-        "show it as a PNG — the browser loads no Highcharts JS. Leave it off "
-        "for the interactive (CDN-loaded) chart.",
+    render_mode = st.radio(
+        "Mode",
+        RENDER_MODES,
+        horizontal=True,
+        help="**Interactive**: Highcharts loads from the CDN in a sandboxed "
+        "iframe (one-way). **Interactive + click events**: a Custom Component v2 "
+        "that also sends clicked points back to Python. **Static PNG**: rendered "
+        "server-side via the Highcharts export server; the browser loads no "
+        "Highcharts JS.",
     )
 
 
@@ -189,10 +202,36 @@ with st.sidebar:
 # --------------------------------------------------------------------------- #
 left, right = st.columns([3, 2], gap="large")
 
+# Forget a click selection when the chart configuration changes, so a point from
+# a previous chart doesn't linger in the click-events panels. Don't clear on the
+# first observation (prev is None) — only when a known signature actually changes.
+if render_mode == MODE_EVENTS:
+    config_sig = (chart_type, x_col, tuple(y_cols))
+    if (
+        st.session_state.get("hc_config_sig") is not None
+        and st.session_state["hc_config_sig"] != config_sig
+    ):
+        clear_selected_point()
+    st.session_state["hc_config_sig"] = config_sig
+
 with right:
     st.subheader("Source data")
     st.dataframe(df, height=min(height, 360))
     st.caption(f"{len(df)} rows × {len(df.columns)} columns")
+
+    # In click-events mode, surface the row behind the most recently clicked
+    # point. The callback stored it before this rerun's body, so it's already
+    # available here even though the chart mounts further down the page.
+    if render_mode == MODE_EVENTS:
+        selected = get_selected_point()
+        if selected is not None:
+            label = point_label(selected)
+            st.markdown("**Clicked point → matching row**")
+            match = df[df[x_col].astype(str) == str(label)]
+            if match.empty:
+                st.caption("No row in the current data matches that point.")
+            else:
+                st.dataframe(match, hide_index=True)
 
 with left:
     st.subheader("Highcharts output")
@@ -204,7 +243,7 @@ with left:
         st.warning("The X-axis column can't also be a Y series — pick a different X.")
         st.stop()
 
-    if static:
+    if render_mode == MODE_STATIC:
         # Server-side render: no Highcharts JS runs in the browser.
         try:
             png = cached_chart_png(df, chart_type, x_col, tuple(y_cols), height, title)
@@ -212,8 +251,7 @@ with left:
             st.error(
                 f"Static (PNG) render failed.\n\n`{type(exc).__name__}: {exc}`\n\n"
                 "This usually means the Highcharts export server is unreachable — "
-                "check your network, or switch the toggle off for the interactive "
-                "chart."
+                "check your network, or pick an interactive mode instead."
             )
             st.stop()
         st.image(png, width="stretch")
@@ -227,11 +265,33 @@ with left:
             "Static PNG rendered server-side via the Highcharts export server — "
             "the browser loads no Highcharts JS."
         )
+    elif render_mode == MODE_EVENTS:
+        # Bidirectional Custom Component v2: Highcharts renders client-side AND
+        # clicked points flow back to Python. No iframe.
+        interactive_chart(df, chart_type, x_col, y_cols, height=height, title=title)
+        st.caption(
+            "Interactive Highcharts as a **Custom Component v2** — Highcharts JS is "
+            "loaded from the CDN in the browser, and clicking any point sends it "
+            "back to Python (bidirectional; no iframe)."
+        )
+        selected = get_selected_point()
+        if selected is not None:
+            label = point_label(selected)
+            info_col, clear_col = st.columns([4, 1])
+            info_col.success(
+                f"Last click → series **{selected.get('series')}**, "
+                f"point **{label}**, value **{selected.get('y')}**"
+            )
+            if clear_col.button("Clear"):
+                clear_selected_point()
+                st.rerun()
+        else:
+            st.info("Click any point, bar, or slice in the chart above.")
     else:
         html = cached_chart_html(df, chart_type, x_col, tuple(y_cols), height, title)
         # The HTML is embedded in a sandboxed iframe with a FIXED height — it
         # does not auto-grow to its content, so size it to the chart.
-        embed_html(html, height=height + 24)
+        st.iframe(html, height=height + 24)
         st.caption(
             "Interactive chart — Highcharts JS is loaded from the CDN in the browser."
         )
